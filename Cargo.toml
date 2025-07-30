@@ -1,0 +1,10 @@
+[package]
+name = "pipeline"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+wasm-tools = "1.235.0"
+wasmparser = "0.235.0"
+wast = "235.0.0"
