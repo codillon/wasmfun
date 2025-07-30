@@ -7,16 +7,8 @@ use wast::parser::{self, ParseBuffer};
 
 pub fn main() {
     let mut editor = Editor::new();
-    {
-        println!("{:?}", &editor);
-    }
-    {
-        editor.input(1, "i32.const 1");
-    }
-
-    {
-        println!("{:?}", &editor);
-    }
+    println!("{:?}", &editor);
+    editor.input(0, "end");
 }
 
 #[derive(Debug)]
@@ -71,8 +63,12 @@ impl<'a> Editor<'a> {
     pub fn fix_frames(&mut self) {
         let instrs: Vec<InstrInfo> = self.lines.iter().map(|line| line.info()).copied().collect();
         let (deactivate_indices, num_synthetic_end) = fix_frames(&instrs);
-        for idx in deactivate_indices {
-            self.lines[idx].set_activated(false);
+        for (i, line) in self.lines.iter_mut().enumerate() {
+            if deactivate_indices.contains(&i) {
+                line.set_activated(false);
+            } else {
+                line.set_activated(true);
+            }
         }
         self.synthetic_ends = num_synthetic_end;
         self.wasm_bin = text_to_binary(&self.text()).unwrap();
@@ -125,6 +121,7 @@ impl<'a> EditLine<'a> {
 
     pub fn set_text(&mut self, new_text: &str) {
         self.text = new_text.to_string();
+        self.info = parse_instr(&new_text);
     }
 
     pub fn logical_text(&self) -> &str {
