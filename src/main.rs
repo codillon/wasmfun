@@ -7,11 +7,16 @@ use wast::parser::{self, ParseBuffer};
 
 pub fn main() {
     let mut editor = Editor::new();
-    {println!("{:?}", &editor);}
-    {editor.input(1, "i32.const 1");}
-    
-    {println!("{:?}", &editor);}
+    {
+        println!("{:?}", &editor);
+    }
+    {
+        editor.input(1, "i32.const 1");
+    }
 
+    {
+        println!("{:?}", &editor);
+    }
 }
 
 #[derive(Debug)]
@@ -24,7 +29,12 @@ pub struct Editor<'a> {
 impl<'a> Editor<'a> {
     pub fn new() -> Self {
         let mut editor = Self {
-            lines: vec![EditLine::new(1, "block".to_string()), EditLine::new(2, "end".to_string()), EditLine::new(3, "end".to_string()), EditLine::new(4, "block".to_string())],
+            lines: vec![
+                EditLine::new(1, "block".to_string()),
+                EditLine::new(2, "end".to_string()),
+                EditLine::new(3, "end".to_string()),
+                EditLine::new(4, "block".to_string()),
+            ],
             synthetic_ends: 0,
             wasm_bin: Vec::new(),
         };
@@ -45,7 +55,9 @@ impl<'a> Editor<'a> {
     }
 
     pub fn text(&self) -> String {
-        let mut joined = self.lines.iter()
+        let mut joined = self
+            .lines
+            .iter()
             .filter(|line| *(line.info()) != InstrInfo::EmptyorMalformed && line.activated())
             .map(|line| line.logical_text())
             .collect::<Vec<_>>()
@@ -82,8 +94,6 @@ impl<'a> Editor<'a> {
         self.fix_frames();
         self.update_operators();
     }
-
-
 }
 
 #[derive(Debug)]
@@ -325,7 +335,6 @@ pub fn get_operators<'a>(wasm_bin: &'a [u8]) -> Vec<wasmparser::Operator<'a>> {
     }
     ops
 }
-
 
 /// Represents a frame entry (like "block end" pair, etc.), with range recorded.
 /// The range is inclusive, containing both start instr number and end instr number.
