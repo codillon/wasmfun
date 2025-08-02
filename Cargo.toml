@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
+self_cell = "1.2.0"
 wasm-tools = "1.235.0"
 wasmparser = "0.235.0"
 wast = "235.0.0"
