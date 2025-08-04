@@ -1,3 +1,4 @@
+use crate::line::EditLine;
 use anyhow::{Result, anyhow};
 use self_cell::self_cell;
 use std::ops::RangeInclusive;
@@ -6,32 +7,46 @@ use wasmparser::{Parser, ValType};
 use wast::core::{Instruction, Module};
 use wast::parser::{self, ParseBuffer};
 
-type Ops<'a> = Result<Vec<Vec<wasmparser::Operator<'a>>>>;
+// (Operator, EditLine idx)
+type Ops<'a> = Result<Vec<Vec<(wasmparser::Operator<'a>, usize)>>>;
 
 self_cell!(
     pub struct OkModule {
         owner: Vec<u8>,
         #[covariant]
         dependent: Ops,
+        // Reverse mapping maps op index (wihtin a function) to a global edit line index
     }
 
     impl {Debug}
 );
 
 impl OkModule {
-    pub fn build(wasm_bin: Vec<u8>) -> Result<Self> {
+    pub fn build(wasm_bin: Vec<u8>, lines: &Vec<EditLine>) -> Result<Self> {
         Ok(OkModule::new(wasm_bin, |wasm_bin| {
             let parser = wasmparser::Parser::new(0);
             let mut functions = Vec::new();
+            let mut line_idx = 0;
 
             for payload in parser.parse_all(wasm_bin) {
                 if let wasmparser::Payload::CodeSectionEntry(body) = payload? {
-                    functions.push(
-                        body.get_operators_reader()?
-                            .into_iter()
-                            .map(|x| Ok(x?))
-                            .collect::<Result<Vec<_>>>()?,
-                    );
+                    let mut func_ops = Vec::new();
+                    for op in body.get_operators_reader()? {
+                        if op.is_err() {
+                            continue;
+                        }
+
+                        // Advance our line idx until we encounter a line that should have an op.
+                        while !lines[line_idx].activated()
+                            || *(lines[line_idx].info()) == InstrInfo::EmptyorMalformed
+                        {
+                            line_idx += 1;
+                        }
+                        debug_assert!(!(line_idx > lines.len()));
+
+                        func_ops.push((op?, line_idx));
+                    }
+                    functions.push(func_ops);
                 }
             }
             Ok(functions)
@@ -172,7 +187,7 @@ pub fn print_operands(wasm_bin: &[u8]) -> Result<Vec<String>> {
 
     for payload in parser.parse_all(wasm_bin) {
         if let wasmparser::ValidPayload::Func(func, body) = validator.payload(&payload?)? {
-            let mut func_validator =
+            let mut func_validator: wasmparser::FuncValidator<wasmparser::ValidatorResources> =
                 func.into_validator(wasmparser::FuncValidatorAllocations::default());
             for op in body.get_operators_reader()? {
                 let op = op?;
@@ -230,6 +245,22 @@ pub fn get_operators<'a>(wasm_bin: &'a [u8]) -> Vec<wasmparser::Operator<'a>> {
 /// The range is inclusive, containing both start instr number and end instr number.
 /// The start number begins at 0.
 pub type Frame = RangeInclusive<usize>;
+
+//
+// Reconstruct the operators afterwards
+// On input, fix the frames, then update the ops
+// Returns a new OkModule (can we do that? We need to move ownership)
+pub fn validate_operators<'a>(binary: &Vec<u8>, ops: &Vec<wasmparser::Operator<'a>>) -> bool {
+    let mut validator = wasmparser::Validator::new();
+    let parser = wasmparser::Parser::new(0);
+
+    for (idx, func) in ops.iter().enumerate() {
+        // We need one stack per function.
+        let mut simulated_stack = Vec::new();
+    }
+
+    return false;
+}
 
 /// Fix frames by deactivated unmatched instrs and append **end** after the last instruction
 ///
@@ -306,4 +337,21 @@ pub fn match_frames(instrs: &[InstrInfo]) -> Vec<Frame> {
         panic!("Unmatched block: {frame_border_stack:?}");
     }
     frames
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+
+    #[test]
+    fn test_module_operator_map() -> Result<()> {
+        let mut edit_lines = Vec::new();
+        edit_lines.push(EditLine::new(1, String::from("block")));
+        edit_lines.push(EditLine::new(1, String::from("block")));
+        edit_lines.push(EditLine::new(1, String::from("block")));
+        edit_lines.push(EditLine::new(1, String::from("block")));
+
+        Ok(())
+    }
 }

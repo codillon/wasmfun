@@ -1,4 +1,5 @@
-use pipeline::utils::*;
+use crate::utils::*;
+use pipeline::line;
 
 pub fn main() {
     let mut editor = Editor::new();
