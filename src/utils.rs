@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
+use self_cell::self_cell;
 use std::ops::RangeInclusive;
 use wasm_tools::parse_binary_wasm;
 use wasmparser::{Parser, ValType};
 use wast::core::{Instruction, Module};
 use wast::parser::{self, ParseBuffer};
-use self_cell::self_cell;
 
 type Ops<'a> = Result<Vec<Vec<wasmparser::Operator<'a>>>>;
 
@@ -20,13 +20,11 @@ self_cell!(
 
 impl OkModule {
     pub fn build(wasm_bin: Vec<u8>) -> Result<Self> {
-        
-
         Ok(OkModule::new(wasm_bin, |wasm_bin| {
             let parser = wasmparser::Parser::new(0);
             let mut functions = Vec::new();
 
-            for payload in parser.parse_all(&wasm_bin) {
+            for payload in parser.parse_all(wasm_bin) {
                 if let wasmparser::Payload::CodeSectionEntry(body) = payload? {
                     functions.push(
                         body.get_operators_reader()?
@@ -44,7 +42,7 @@ impl OkModule {
         self.borrow_owner()
     }
 
-    pub fn ops(&self) -> &Ops{
+    pub fn ops(&self) -> &Ops {
         self.borrow_dependent()
     }
 
@@ -52,9 +50,6 @@ impl OkModule {
         self.with_dependent(|_binary, ops| ops.as_ref().map(|ops| ops[func_idx].len()))
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrInfo {
@@ -105,16 +100,14 @@ pub fn parse_instr(s: &str) -> InstrInfo {
     if s.is_empty() {
         // is there an instruction on this line?
         InstrInfo::EmptyorMalformed
-    } else {
-        if let Ok(buf) = ParseBuffer::new(s) {
-            if let Ok(instr) = parser::parse::<Instruction>(&buf) {
-                instr.into()
-            } else {
-                InstrInfo::EmptyorMalformed
-            }
+    } else if let Ok(buf) = ParseBuffer::new(s) {
+        if let Ok(instr) = parser::parse::<Instruction>(&buf) {
+            instr.into()
         } else {
             InstrInfo::EmptyorMalformed
         }
+    } else {
+        InstrInfo::EmptyorMalformed
     }
 }
 
@@ -295,7 +288,7 @@ pub fn match_frames(instrs: &[InstrInfo]) -> Vec<Frame> {
         }
     }
     if !frame_border_stack.is_empty() {
-        panic!("Unmatched block: {:?}", frame_border_stack);
+        panic!("Unmatched block: {frame_border_stack:?}");
     }
     frames
 }

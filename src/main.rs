@@ -3,7 +3,7 @@ use pipeline::utils::*;
 pub fn main() {
     let mut editor = Editor::new();
     editor.input(1, "");
-    println!("{:?}", editor);
+    println!("{editor:?}");
 }
 
 #[derive(Debug)]
@@ -25,7 +25,8 @@ impl Editor {
                 EditLine::new(4, String::from("block")),
             ],
             synthetic_ends: 0,
-            module: OkModule::build(text_to_binary("block\nend\nend\nblock").expect("wasm_bin")).expect("OkModule"),
+            module: OkModule::build(text_to_binary("block\nend\nend\nblock").expect("wasm_bin"))
+                .expect("OkModule"),
         };
         editor.fix_frames();
         editor
@@ -68,7 +69,8 @@ impl Editor {
             }
         }
         self.synthetic_ends = num_synthetic_end;
-        self.module = OkModule::build(text_to_binary(&self.text()).expect("wasm binary")).expect("OkModule");
+        self.module =
+            OkModule::build(text_to_binary(&self.text()).expect("wasm binary")).expect("OkModule");
     }
 
     pub fn update_operators(&mut self) {
@@ -86,7 +88,7 @@ impl Editor {
             } else {
                 line.set_op(None);
             }
-        }        
+        }
     }
 
     pub fn input(&mut self, idx: usize, new_text: &str) {
@@ -119,7 +121,7 @@ impl EditLine {
             id,
             text: start_text,
             //div_ref: DivRef::new(),
-            info: info,
+            info,
             activated: true,
             op: None,
         }
@@ -131,7 +133,7 @@ impl EditLine {
 
     pub fn set_text(&mut self, new_text: &str) {
         self.text = new_text.to_string();
-        self.info = parse_instr(&new_text);
+        self.info = parse_instr(new_text);
     }
 
     pub fn logical_text(&self) -> &str {
@@ -180,5 +182,3 @@ impl EditLine {
         self.op = idx;
     }
 }
-
-
