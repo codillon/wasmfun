@@ -2,7 +2,7 @@ use pipeline::utils::*;
 
 pub fn main() {
     let mut editor = Editor::new();
-    editor.input(1, "");
+    editor.input(0, "i32.const 1");
     println!("{editor:?}");
 }
 
@@ -20,9 +20,9 @@ impl Editor {
             next_id: 5,
             lines: vec![
                 EditLine::new(1, String::from("block")),
-                EditLine::new(2, String::from("end")),
+                EditLine::new(2, String::from("block (param i32) (result i32)")),
                 EditLine::new(3, String::from("end")),
-                EditLine::new(4, String::from("block")),
+                EditLine::new(4, String::from("drop")),
             ],
             synthetic_ends: 0,
             module: OkModule::build(text_to_binary("block\nend\nend\nblock").expect("wasm_bin"))
@@ -78,7 +78,7 @@ impl Editor {
         let mut op_index = 0;
 
         for line in self.lines.iter_mut() {
-            if line.activated() && *(line.info()) != InstrInfo::EmptyorMalformed {
+            if line.activated() && line.can_have_op() {
                 if op_index < ops_len {
                     line.set_op(Some(op_index));
                     op_index += 1;
@@ -180,5 +180,9 @@ impl EditLine {
 
     pub fn set_op(&mut self, idx: Option<usize>) {
         self.op = idx;
+    }
+
+    pub fn can_have_op(&self) -> bool {
+        self.info != InstrInfo::EmptyorMalformed && self.info != InstrInfo::FuncHeader
     }
 }

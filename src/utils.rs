@@ -53,6 +53,8 @@ impl OkModule {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrInfo {
+    FuncHeader,
+    FuncEnd,
     If,
     Else,
     End,
@@ -100,6 +102,19 @@ pub fn parse_instr(s: &str) -> InstrInfo {
     if s.is_empty() {
         // is there an instruction on this line?
         InstrInfo::EmptyorMalformed
+    } else if s == ")" {
+        InstrInfo::FuncEnd
+    } else if s.starts_with("(func") {
+        let module = format!("module {s})");
+        if let Ok(buf) = ParseBuffer::new(&module) {
+            if parser::parse::<Module>(&buf).is_ok() {
+                InstrInfo::FuncHeader
+            } else {
+                InstrInfo::EmptyorMalformed
+            }
+        } else {
+            InstrInfo::EmptyorMalformed
+        }
     } else if let Ok(buf) = ParseBuffer::new(s) {
         if let Ok(instr) = parser::parse::<Instruction>(&buf) {
             instr.into()
@@ -113,7 +128,7 @@ pub fn parse_instr(s: &str) -> InstrInfo {
 
 /// Convert from WebAssembly text format to binary format. Doesn't comprehensively enforce well-formedness.
 pub fn text_to_binary(lines: &str) -> Result<Vec<u8>> {
-    let txt = format!("module (func {lines})");
+    let txt = format!("module {lines}");
     Ok(parser::parse::<Module>(&ParseBuffer::new(&txt)?)?.encode()?)
 }
 
