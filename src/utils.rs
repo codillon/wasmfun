@@ -1,3 +1,4 @@
+use crate::editor::*;
 use anyhow::{Result, anyhow};
 use self_cell::self_cell;
 use std::ops::RangeInclusive;
@@ -6,32 +7,44 @@ use wasmparser::{Parser, ValType};
 use wast::core::{Instruction, Module};
 use wast::parser::{self, ParseBuffer};
 
-type Ops<'a> = Result<Vec<Vec<wasmparser::Operator<'a>>>>;
+// (Operator, EditLine idx)
+type Ops<'a> = Result<Vec<Vec<(wasmparser::Operator<'a>, usize)>>>;
 
 self_cell!(
     pub struct OkModule {
         owner: Vec<u8>,
         #[covariant]
         dependent: Ops,
+        // Reverse mapping maps op index (wihtin a function) to a global edit line index
     }
 
     impl {Debug}
 );
 
 impl OkModule {
-    pub fn build(wasm_bin: Vec<u8>) -> Result<Self> {
+    pub fn build(wasm_bin: Vec<u8>, lines: &Vec<EditLine>) -> Result<Self> {
         Ok(OkModule::new(wasm_bin, |wasm_bin| {
             let parser = wasmparser::Parser::new(0);
             let mut functions = Vec::new();
+            let mut line_idx = 0;
 
             for payload in parser.parse_all(wasm_bin) {
                 if let wasmparser::Payload::CodeSectionEntry(body) = payload? {
-                    functions.push(
-                        body.get_operators_reader()?
-                            .into_iter()
-                            .map(|x| Ok(x?))
-                            .collect::<Result<Vec<_>>>()?,
-                    );
+                    let mut func_ops = Vec::new();
+                    for op in body.get_operators_reader()? {
+                        if op.is_err() {
+                            continue;
+                        }
+                        // Advance our line idx until we encounter a line that should have an op.
+                        while !lines[line_idx].activated() || !lines[line_idx].can_have_op() {
+                            line_idx += 1;
+                        }
+                        debug_assert!(!(line_idx > lines.len()));
+
+                        func_ops.push((op?, line_idx));
+                        line_idx += 1;
+                    }
+                    functions.push(func_ops);
                 }
             }
             Ok(functions)
@@ -172,7 +185,7 @@ pub fn print_operands(wasm_bin: &[u8]) -> Result<Vec<String>> {
 
     for payload in parser.parse_all(wasm_bin) {
         if let wasmparser::ValidPayload::Func(func, body) = validator.payload(&payload?)? {
-            let mut func_validator =
+            let mut func_validator: wasmparser::FuncValidator<wasmparser::ValidatorResources> =
                 func.into_validator(wasmparser::FuncValidatorAllocations::default());
             for op in body.get_operators_reader()? {
                 let op = op?;
@@ -230,6 +243,36 @@ pub fn get_operators<'a>(wasm_bin: &'a [u8]) -> Vec<wasmparser::Operator<'a>> {
 /// The range is inclusive, containing both start instr number and end instr number.
 /// The start number begins at 0.
 pub type Frame = RangeInclusive<usize>;
+
+/// A list of occurances that require synthetic changes to appease the validator.
+/// The first usize is the line where operators need to be inserted, followed
+/// by a list of operators that need to be added in-order.
+/// Finally, the trailing usize refers to the number of synthetic "drops" that
+/// need to be added to balance out the additions.
+pub type FixOperandsResult<'a> = Vec<((usize, Vec<wasmparser::Operator<'a>>), usize)>;
+
+//
+// Reconstruct the operators afterwards
+// On input, fix the frames, then update the ops
+// Returns a new OkModule (can we do that? We need to move ownership)
+pub fn fix_operands<'a>(
+    wasm_binary: &Vec<u8>,
+    ops: &Vec<(wasmparser::Operator<'a>, usize)>,
+) -> Result<FixOperandsResult<'a>> {
+    let mut validator = wasmparser::Validator::new();
+    let parser = wasmparser::Parser::new(0);
+
+    for payload in parser.parse_all(wasm_binary) {
+        if let wasmparser::ValidPayload::Func(func, body) = validator.payload(&payload?)? {
+            let mut func_validator: wasmparser::FuncValidator<wasmparser::ValidatorResources> =
+                func.into_validator(wasmparser::FuncValidatorAllocations::default());
+
+            for (idx, func) in ops.iter().enumerate() {}
+        }
+    }
+
+    return Ok(Vec::new());
+}
 
 /// Fix frames by deactivated unmatched instrs and append **end** after the last instruction
 ///
@@ -306,4 +349,44 @@ pub fn match_frames(instrs: &[InstrInfo]) -> Vec<Frame> {
         panic!("Unmatched block: {frame_border_stack:?}");
     }
     frames
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use anyhow::Result;
+
+    #[test]
+    fn test_module_operator_map() -> Result<()> {
+        let mut edit_lines = Vec::new();
+        edit_lines.push(EditLine::new(0, String::from("(func")));
+        edit_lines.push(EditLine::new(1, String::from("i32.const 2")));
+        edit_lines.push(EditLine::new(2, String::from("i32.const 5")));
+        edit_lines.push(EditLine::new(3, String::from("i32.add")));
+        edit_lines.push(EditLine::new(4, String::from("\n")));
+        edit_lines.push(EditLine::new(5, String::from("drop")));
+        edit_lines.push(EditLine::new(6, String::from("")));
+        edit_lines.push(EditLine::new(7, String::from(")")));
+
+        edit_lines[4].set_activated(false);
+        edit_lines[6].set_info(InstrInfo::EmptyorMalformed);
+
+        let bin =
+            text_to_binary("(func i32.const 2\ni32.const 5\ni32.add\ndrop\n)").expect("wasm_bin");
+        let module = OkModule::build(bin, &edit_lines);
+        assert!(module.is_ok());
+        let mut op_indices = HashSet::new();
+        if let Ok(all_ops) = module.unwrap().borrow_dependent() {
+            for func in all_ops {
+                for op in func {
+                    // Ensure that line indices are in-bounds and unique.
+                    assert!(op.1 < edit_lines.len());
+                    assert!(op_indices.insert(op.1));
+                }
+            }
+        }
+        Ok(())
+    }
 }
