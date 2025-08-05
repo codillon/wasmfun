@@ -11,12 +11,16 @@ pub struct Editor {
 impl Editor {
     pub fn new() -> Self {
         let mut editor = Self {
-            next_id: 5,
+            next_id: 9,
             lines: vec![
-                EditLine::new(1, String::from("block")),
-                EditLine::new(2, String::from("block (param i32) (result i32)")),
-                EditLine::new(3, String::from("end")),
-                EditLine::new(4, String::from("drop")),
+                EditLine::new(1, String::from("(func $add (param i32)")),
+                EditLine::new(2, String::from("i32.const 0")),
+                EditLine::new(3, String::from("drop")),
+                EditLine::new(4, String::from(")")),
+                EditLine::new(5, String::from("(func")),
+                EditLine::new(6, String::from("i32.const 1")),
+                EditLine::new(7, String::from("call $add")),
+                EditLine::new(8, String::from(")")),
             ],
             synthetic_ends: 0,
             module: OkModule::build(text_to_binary("").expect("wasm_bin"), &Vec::new())
@@ -98,6 +102,10 @@ impl Editor {
         let editline = EditLine::new(self.next_id, String::from(""));
         self.lines.insert(idx, editline);
         self.next_id += 1;
+    }
+
+    pub fn run_test(&self) {
+        test(&self.text(), &self.module.ops().as_ref().unwrap());
     }
 }
 

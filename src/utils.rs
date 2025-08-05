@@ -226,6 +226,17 @@ fn valtype_to_str(ty: ValType) -> &'static str {
     }
 }
 
+fn str_type_to_instr(s: &str) -> &str {
+    match s {
+        "i32" => "i32.const 0",
+        "i64" => "i64.const 0",
+        "f32" => "f32.const 0",
+        "f64" => "f64.const 0",
+        "v128" => "v128.const i32x4 0 0 0 0",
+        _ => "ref",
+    }
+}
+
 pub fn get_operators<'a>(wasm_bin: &'a [u8]) -> Vec<wasmparser::Operator<'a>> {
     let parser = wasmparser::Parser::new(0);
     let mut ops = Vec::new();
@@ -272,6 +283,36 @@ pub fn fix_operands<'a>(
     }
 
     return Ok(Vec::new());
+}
+
+pub fn test<'a>(s: &str, ops: &Vec<Vec<(wasmparser::Operator<'a>, usize)>>) {
+    let bin = text_to_binary(s).expect("wasm binary");
+    let mut validator = wasmparser::Validator::new();
+    let parser = wasmparser::Parser::new(0);
+    let dummy_offset = 1; // no need to track offsets, but validator has safety checks against 0
+
+    for payload in parser.parse_all(&bin) {
+        println!("New payload: {payload:?}");
+        if let wasmparser::ValidPayload::Func(func, body) = validator.payload(&payload.unwrap()).unwrap() {
+            let mut func_validator: wasmparser::FuncValidator<wasmparser::ValidatorResources> =
+                func.into_validator(wasmparser::FuncValidatorAllocations::default());
+            for (op, line) in ops.iter().flatten() {
+                let line = *line;
+                println!("Validating operator: {op:?} at line {line}");
+                let result = func_validator.op(dummy_offset, op);
+                match result {
+                    Err(e) => {
+                        println!("Error validating operator: {e}");
+                        if e.to_string().starts_with("type mismatch:") {
+                            let ty = e.to_string().trim_start_matches("type mismatch: expected ").split_once(' ').map(|(first, _)| first).unwrap_or(&e.to_string());
+                        }
+                        continue;
+                    }
+                    Ok(_) => (),
+                }
+            }
+        }
+    }
 }
 
 /// Fix frames by deactivated unmatched instrs and append **end** after the last instruction
