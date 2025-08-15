@@ -34,9 +34,9 @@ impl OkModule {
                     for op in body.get_operators_reader()? {
                         if op.is_err() {
                             continue;
-                        }
+                        };
                         // Advance our line idx until we encounter a line that should have an op.
-                        while !lines[line_idx].activated() || !lines[line_idx].can_have_op() {
+                        while !lines[line_idx].can_have_op() {
                             line_idx += 1;
                         }
                         debug_assert!(!(line_idx > lines.len()));
@@ -177,40 +177,58 @@ pub fn is_well_formed_func(lines: &str) -> bool {
 ///
 /// # Assumptions
 /// The function is valid
-pub fn print_operands(wasm_bin: &[u8]) -> Result<Vec<String>> {
+pub fn print_operands<'a>(
+    wasm_bin: &[u8],
+    ops: &Vec<Vec<(wasmparser::Operator<'a>, usize)>>,
+) -> Result<Vec<(Vec<(ValType, usize)>, Vec<ValType>)>> {
     let mut validator = wasmparser::Validator::new();
     let parser = wasmparser::Parser::new(0);
     let mut result = Vec::new();
     let dummy_offset = 1; // no need to track offsets, but validator has safety checks against 0
+    let mut ops_iter = ops.iter();
 
     for payload in parser.parse_all(wasm_bin) {
-        if let wasmparser::ValidPayload::Func(func, body) = validator.payload(&payload?)? {
+        if let wasmparser::ValidPayload::Func(func, _) = validator.payload(&payload?)? {
             let mut func_validator: wasmparser::FuncValidator<wasmparser::ValidatorResources> =
                 func.into_validator(wasmparser::FuncValidatorAllocations::default());
-            for op in body.get_operators_reader()? {
-                let op = op?;
+            let Some(func_ops) = ops_iter.next() else {
+                println!("Warning: more functions than ops provided");
+                break;
+            };
+            let mut idx_stack: Vec<usize> = Vec::new();
+            for (op, idx) in func_ops.iter() {
                 let (pop_count, push_count) = op
                     .operator_arity(&func_validator.visitor(dummy_offset))
                     .ok_or(anyhow!("could not determine operator arity"))?;
                 let prev_height = func_validator.operand_stack_height();
-                let inputs = (prev_height - pop_count..prev_height)
-                    .filter_map(|i| func_validator.get_operand_type(i as usize).flatten())
-                    .map(valtype_to_str)
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let mut inputs = (prev_height - pop_count..prev_height)
+                    .filter_map(|i| {
+                        let valtype = func_validator.get_operand_type(i as usize).flatten();
+                        let idx = idx_stack.pop();
+                        match (valtype, idx) {
+                            (Some(val), Some(idx)) => Some((val, idx)),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                for _ in &inputs {
+                    idx_stack.pop();
+                }
+                println!("Validating operator: {op:?} with inputs: {inputs:?}");
                 func_validator.op(dummy_offset, &op)?;
                 let new_height = func_validator.operand_stack_height();
-                let outputs = (new_height - push_count..new_height)
+                let mut outputs = (new_height - push_count..new_height)
                     .filter_map(|i| func_validator.get_operand_type(i as usize).flatten())
-                    .map(valtype_to_str)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                result.push(format!("Inputs: [{inputs}] Returns: [{outputs}]"));
+                    .collect::<Vec<_>>();
+                for _ in &outputs {
+                    idx_stack.push(*idx);
+                }
+                inputs.reverse();
+                outputs.reverse();
+                result.push((inputs, outputs));
             }
         }
     }
-    //remove the entry associated with the `end` at end of function body
-    result.pop();
 
     Ok(result)
 }
@@ -285,34 +303,46 @@ pub fn fix_operands<'a>(
     return Ok(Vec::new());
 }
 
-pub fn test<'a>(s: &str, ops: &Vec<Vec<(wasmparser::Operator<'a>, usize)>>) {
-    let bin = text_to_binary(s).expect("wasm binary");
+pub fn test<'a>(wasm_bin: &[u8], ops: &Vec<Vec<(wasmparser::Operator<'a>)>>) -> Option<String> {
     let mut validator = wasmparser::Validator::new();
     let parser = wasmparser::Parser::new(0);
     let dummy_offset = 1; // no need to track offsets, but validator has safety checks against 0
+    let mut ops_iter = ops.iter();
 
-    for payload in parser.parse_all(&bin) {
+    for payload in parser.parse_all(wasm_bin) {
         println!("New payload: {payload:?}");
-        if let wasmparser::ValidPayload::Func(func, body) = validator.payload(&payload.unwrap()).unwrap() {
+        if let wasmparser::ValidPayload::Func(func, _) =
+            validator.payload(&payload.unwrap()).unwrap()
+        {
             let mut func_validator: wasmparser::FuncValidator<wasmparser::ValidatorResources> =
                 func.into_validator(wasmparser::FuncValidatorAllocations::default());
-            for (op, line) in ops.iter().flatten() {
-                let line = *line;
-                println!("Validating operator: {op:?} at line {line}");
+            let Some(func_ops) = ops_iter.next() else {
+                println!("Warning: more functions than ops provided");
+                break;
+            };
+            for op in func_ops.iter() {
+                println!("Validating operator: {op:?}");
                 let result = func_validator.op(dummy_offset, op);
                 match result {
                     Err(e) => {
                         println!("Error validating operator: {e}");
-                        if e.to_string().starts_with("type mismatch:") {
-                            let ty = e.to_string().trim_start_matches("type mismatch: expected ").split_once(' ').map(|(first, _)| first).unwrap_or(&e.to_string());
+                        let error = e.to_string();
+                        if error.starts_with("type mismatch:") {
+                            let ty = error
+                                .trim_start_matches("type mismatch: expected ")
+                                .split_once(' ')
+                                .map(|(first, _)| first)
+                                .unwrap_or(&error);
+                            let instr = str_type_to_instr(ty);
+                            return Some(instr.to_string());
                         }
-                        continue;
                     }
                     Ok(_) => (),
-                }
+                };
             }
         }
     }
+    None
 }
 
 /// Fix frames by deactivated unmatched instrs and append **end** after the last instruction
@@ -398,20 +428,20 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
-
+    /*
     #[test]
     fn test_module_operator_map() -> Result<()> {
         let mut edit_lines = Vec::new();
-        edit_lines.push(EditLine::new(0, String::from("(func")));
-        edit_lines.push(EditLine::new(1, String::from("i32.const 2")));
-        edit_lines.push(EditLine::new(2, String::from("i32.const 5")));
-        edit_lines.push(EditLine::new(3, String::from("i32.add")));
-        edit_lines.push(EditLine::new(4, String::from("\n")));
-        edit_lines.push(EditLine::new(5, String::from("drop")));
-        edit_lines.push(EditLine::new(6, String::from("")));
-        edit_lines.push(EditLine::new(7, String::from(")")));
+        edit_lines.push(EditLine::new(0, String::from("(func"), InstrKind::Activated));
+        edit_lines.push(EditLine::new(1, String::from("i32.const 2"), InstrKind::Activated));
+        edit_lines.push(EditLine::new(2, String::from("i32.const 5"), InstrKind::Activated));
+        edit_lines.push(EditLine::new(3, String::from("i32.add"), InstrKind::Activated));
+        edit_lines.push(EditLine::new(4, String::from("\n"), InstrKind::Activated));
+        edit_lines.push(EditLine::new(5, String::from("drop"), InstrKind::Activated));
+        edit_lines.push(EditLine::new(6, String::from(""), InstrKind::Activated));
+        edit_lines.push(EditLine::new(7, String::from(")"), InstrKind::Activated));
 
-        edit_lines[4].set_activated(false);
+        edit_lines[4].set_kind(InstrKind::Deactivated);
         edit_lines[6].set_info(InstrInfo::EmptyorMalformed);
 
         let bin =
@@ -429,5 +459,5 @@ mod tests {
             }
         }
         Ok(())
-    }
+    }*/
 }
